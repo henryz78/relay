@@ -159,9 +159,7 @@ async function epPlay(resp, requestUrl) {
   const ts = Date.now();
   let data = null;
   let note = "";
-  const callXhr = async (hash, extraHeaders) => {
-    const u = new URL(`https://www.eporner.com/xhr/video/${encodeURIComponent(id)}`);
-    if (hash) u.searchParams.set("hash", hash);
+  const fullParams = (u) => {
     u.searchParams.set("domain", "www.eporner.com");
     u.searchParams.set("pixelRatio", "2");
     u.searchParams.set("playerWidth", "0");
@@ -170,56 +168,78 @@ async function epPlay(resp, requestUrl) {
     u.searchParams.set("embed", "false");
     u.searchParams.set("supportedFormats", "hls,dash,h265,vp9,av1,mp4");
     u.searchParams.set("_", String(ts));
-    const r = await fetch(u, { headers: { ...EP_HEADERS, ...(extraHeaders || {}) }, signal: AbortSignal.timeout(20_000) });
+    return u;
+  };
+  const richyParams = (u) => {
+    u.searchParams.set("device", "generic");
+    u.searchParams.set("domain", "www.eporner.com");
+    u.searchParams.set("fallback", "false");
+    return u;
+  };
+  const callXhr = async (hash, { cookies = "", richy = false, referer = "", noCookies = false } = {}) => {
+    const u = new URL(`https://www.eporner.com/xhr/video/${encodeURIComponent(id)}`);
+    if (hash) u.searchParams.set("hash", hash);
+    (richy ? richyParams : fullParams)(u);
+    const headers = { ...EP_HEADERS };
+    if (noCookies) {
+      headers.cookie = "EPRNS=deleted";
+    } else if (cookies) {
+      headers.cookie = cookies;
+    }
+    if (referer) headers.referer = referer;
+    if (referer) {
+      headers.origin = "https://www.eporner.com";
+      headers["sec-fetch-site"] = "same-origin";
+      headers["sec-fetch-mode"] = "cors";
+      headers["sec-fetch-dest"] = "empty";
+      headers["x-requested-with"] = "XMLHttpRequest";
+    }
+    const r = await fetch(u, { headers, signal: AbortSignal.timeout(20_000) });
     const text = await r.text();
     if (!text.trim().startsWith("{")) throw new Error("non-json xhr response");
-    const j = JSON.parse(text);
-    return j;
+    return JSON.parse(text);
   };
   const validData = (j) => j && j.available === true && j.sources && Object.keys(j.sources.mp4 || {}).some((k) => !/^auto$/.test(k) && j.sources.mp4[k]?.src);
-  try {
-    const j = await callXhr("");
-    if (validData(j)) { data = j; note = "xhr-direct ok (no hash needed)"; }
-    else { note = `xhr-direct auth failed (code ${j.code})`; }
-  } catch (e) {
-    note = "xhr-direct error: " + (e?.message || String(e));
-  }
-  if (!data) {
+  const variants = [];
+  const tryVariant = async (label, fn) => {
+    if (data) return;
     try {
-      const api = new URL("https://www.eporner.com/api/v2/video/id/");
-      api.searchParams.set("id", id);
-      api.searchParams.set("thumbsize", "medium");
-      api.searchParams.set("format", "json");
-      const ar = await fetch(api, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
-      const aj = await ar.json();
-      const watchUrl = aj?.url || "";
-      if (watchUrl) {
-        const wr = await fetch(watchUrl, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
-        const setC = wr.headers.getSetCookie?.() || [];
-        const cookie = setC.map((c) => c.split(";")[0]).join("; ");
-        const wh = await wr.text();
-        const m = wh.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || wh.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i) || wh.match(/xhr\/video\/[^"']*?[?&]hash=([a-zA-Z0-9_-]+)/i);
-        const hash = toBase36Hash(m ? m[1] : "");
-        const h = {
-          cookie,
-          referer: watchUrl,
-          origin: "https://www.eporner.com",
-          "sec-fetch-site": "same-origin",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-dest": "empty",
-          "x-requested-with": "XMLHttpRequest",
-        };
-        const j = await callXhr(hash, h);
-        if (validData(j)) { data = j; note = hash ? "watch-page hash fallback ok" : "watch-page xhr ok (no hash needed)"; }
-        else note = `watch-page xhr auth failed (code ${j.code}) hex=${m ? m[1] : "none"} hash=${hash} cookies=${setC.length} watch=${watchUrl}`;
-      } else {
-        note = "watch fallback: no url from api";
-      }
+      const j = await fn();
+      if (validData(j)) { data = j; note = label + " ok"; }
+      else { variants.push(`${label}: code ${j.code}`); }
     } catch (e) {
-      note = "watch fallback error: " + (e?.message || String(e));
+      variants.push(`${label}: ${(e?.message || String(e)).slice(0, 60)}`);
     }
+  };
+  await tryVariant("xhr-nohash", () => callXhr(""));
+  let hash = "", cookie = "", watchUrl = "";
+  try {
+    const api = new URL("https://www.eporner.com/api/v2/video/id/");
+    api.searchParams.set("id", id);
+    api.searchParams.set("thumbsize", "medium");
+    api.searchParams.set("format", "json");
+    const ar = await fetch(api, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
+    const aj = await ar.json();
+    watchUrl = aj?.url || "";
+    if (!watchUrl) throw new Error("no url from api");
+    const wr = await fetch(watchUrl, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
+    const setC = wr.headers.getSetCookie?.() || [];
+    cookie = setC.map((c) => c.split(";")[0]).join("; ");
+    const wh = await wr.text();
+    const m = wh.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || wh.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i) || wh.match(/xhr\/video\/[^"']*?[?&]hash=([a-zA-Z0-9_-]+)/i);
+    hash = toBase36Hash(m ? m[1] : "");
+  } catch (e) {
+    variants.push("watch: " + (e?.message || String(e)).slice(0, 60));
   }
-  if (!data) return json(resp, { message: "ep play unavailable: " + note, provider: "eporner" }, 502);
+  if (hash) {
+    await tryVariant("xhr-cookie-full", () => callXhr(hash, { cookies: cookie, referer: watchUrl }));
+    await tryVariant("xhr-nocookie-richy", () => callXhr(hash, { noCookies: true, richy: true, referer: watchUrl }));
+    await tryVariant("xhr-cookie-richy", () => callXhr(hash, { cookies: cookie, richy: true, referer: watchUrl }));
+    await tryVariant("xhr-cookie-richy-noreferer", () => callXhr(hash, { cookies: cookie, richy: true }));
+  } else {
+    variants.push("no hash on watch page");
+  }
+  if (!data) return json(resp, { message: "ep play unavailable", attempts: variants, provider: "eporner" }, 502);
   const streams = [];
   const hls = data.sources.hls?.auto?.src || "";
   if (hls) streams.push({ label: "HLS · 自动 · 推荐", url: hls, type: "application/x-mpegURL" });

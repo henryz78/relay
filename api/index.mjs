@@ -211,7 +211,7 @@ async function epPlay(resp, requestUrl) {
         };
         const j = await callXhr(hash, h);
         if (validData(j)) { data = j; note = hash ? "watch-page hash fallback ok" : "watch-page xhr ok (no hash needed)"; }
-        else note = `watch-page xhr auth failed (code ${j.code})`;
+        else note = `watch-page xhr auth failed (code ${j.code}) hex=${m ? m[1] : "none"} hash=${hash} cookies=${setC.length} watch=${watchUrl}`;
       } else {
         note = "watch fallback: no url from api";
       }

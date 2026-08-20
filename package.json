@@ -1,0 +1,12 @@
+{
+  "name": "ph-vercel-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "devDependencies": {
+    "vercel": "^37.0.0"
+  }
+}

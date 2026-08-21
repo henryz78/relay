@@ -352,24 +352,26 @@ async function hmRelay(resp, requestUrl) {
     `https://hanime1.com${path}`,
     `https://r.jina.ai/http://hanime1.com${path}`,
     `https://r.jina.ai/https://hanime1.com${path}`,
+    `https://hanime1.me${path}`,
+    `https://r.jina.ai/http://hanime1.me${path}`,
   ];
-  let lastError;
+  const attempts = [];
   for (const target of targets) {
     try {
       const r = await fetch(target, { headers: HM_HEADERS, signal: AbortSignal.timeout(20_000) });
-      if (!r.ok) throw new Error(`hanime1 ${r.status}`);
       const html = await r.text();
-      if (!/<html\b|video-item-container|skip-page-form|og:title/i.test(html)) throw new Error("invalid HTML");
+      if (!r.ok) throw new Error(`HTTP ${r.status} len=${html.length} preview=${html.slice(0,120).replace(/\s+/g," ").slice(0,120)}`);
+      if (!/<html\b|video-item-container|skip-page-form|og:title/i.test(html)) throw new Error(`invalid HTML len=${html.length} preview=${html.slice(0,120).replace(/\s+/g," ").slice(0,120)}`);
       resp.setHeader("content-type", "text/html; charset=utf-8");
       resp.setHeader("access-control-allow-origin", "*");
       resp.setHeader("cache-control", "public, max-age=60");
       resp.status(200).end(html);
       return;
     } catch (e) {
-      lastError = e;
+      attempts.push(`${target} => ${(e?.message || String(e)).slice(0,200)}`);
     }
   }
-  return json(resp, { message: lastError?.message || "hanime1 relay unavailable", provider: "hm" }, 502);
+  return json(resp, { message: attempts.join(" | ") || "hanime1 relay unavailable", provider: "hm" }, 502);
 }
 
 export default async function handler(req, resp) {

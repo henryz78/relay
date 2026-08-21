@@ -212,7 +212,7 @@ async function epPlay(resp, requestUrl) {
     }
   };
   await tryVariant("xhr-nohash", () => callXhr(""));
-  let hash = "", cookie = "", watchUrl = "";
+  let hash = "", cookie = "", watchUrl = "", watchDebug = null;
   try {
     const api = new URL("https://www.eporner.com/api/v2/video/id/");
     api.searchParams.set("id", id);
@@ -222,10 +222,20 @@ async function epPlay(resp, requestUrl) {
     const aj = await ar.json();
     watchUrl = aj?.url || "";
     if (!watchUrl) throw new Error("no url from api");
-    const wr = await fetch(watchUrl, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
+    const watchHeaders = {
+      ...EP_HEADERS,
+      "accept-language": "en-US,en;q=0.9",
+      "accept-encoding": "gzip, deflate, br",
+      "upgrade-insecure-requests": "1",
+      "sec-fetch-site": "none",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-dest": "document",
+    };
+    const wr = await fetch(watchUrl, { headers: watchHeaders, signal: AbortSignal.timeout(20_000) });
     const setC = wr.headers.getSetCookie?.() || [];
     cookie = setC.map((c) => c.split(";")[0]).join("; ");
     const wh = await wr.text();
+    watchDebug = { status: wr.status, len: wh.length, hasHash: /EP\.video\.player\.hash/.test(wh), hasBot: /Just a moment|challenge|cf-challenge/i.test(wh), preview: wh.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) };
     const m = wh.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || wh.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i) || wh.match(/xhr\/video\/[^"']*?[?&]hash=([a-zA-Z0-9_-]+)/i);
     hash = toBase36Hash(m ? m[1] : "");
   } catch (e) {
@@ -239,7 +249,7 @@ async function epPlay(resp, requestUrl) {
   } else {
     variants.push("no hash on watch page");
   }
-  if (!data) return json(resp, { message: "ep play unavailable", attempts: variants, provider: "eporner" }, 502);
+  if (!data) return json(resp, { message: "ep play unavailable", attempts: variants, watchDebug, watchUrl, provider: "eporner" }, 502);
   const streams = [];
   const hls = data.sources.hls?.auto?.src || "";
   if (hls) streams.push({ label: "HLS · 自动 · 推荐", url: hls, type: "application/x-mpegURL" });

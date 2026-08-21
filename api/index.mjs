@@ -318,60 +318,6 @@ function res(resp, body, contentType) {
   resp.status(200).end(body);
 }
 
-async function hmRelay(resp, requestUrl) {
-  // Extract raw path param handling encoded & unencoded queries (spec: /search?query=AI&page=1)
-  const rawUrl = requestUrl.toString();
-  let path = requestUrl.searchParams.get("path") || "";
-  const rawMatch = rawUrl.match(/[?&]path=([^&]*)/);
-  if (rawMatch) {
-    try { path = decodeURIComponent(rawMatch[1]); } catch { path = rawMatch[1]; }
-    // If original path contained unencoded &page=, searchParams split it; reconstruct
-    // Collect extra hanime1 query params that were split out (query, page, genre, sort, v, etc.)
-    const extraKeys = ["query", "page", "genre", "sort", "v", "type"];
-    for (const key of extraKeys) {
-      const val = requestUrl.searchParams.get(key);
-      // Only append if path doesn't already contain this key and val exists and path is search/watch
-      if (val !== null && !path.includes(`${key}=`)) {
-        path += (path.includes("?") ? "&" : "?") + `${key}=${encodeURIComponent(val)}`;
-      }
-    }
-  }
-  if (!path) path = "/";
-  if (!path.startsWith("/")) path = `/${path}`;
-  if (path.includes("..")) return json(resp, { message: "invalid path" }, 400);
-  // Allow only hanime1 directory/detail paths
-  if (!/^(\/|\/search|\/watch|\/browse)/.test(path)) return json(resp, { message: "invalid path" }, 400);
-
-  const HM_HEADERS = {
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    accept: "text/html,application/xhtml+xml",
-    "accept-language": "en-US,en;q=0.8",
-    "x-return-format": "html",
-  };
-  const targets = [
-    `https://hanime1.com${path}`,
-    `https://r.jina.ai/http://hanime1.com${path}`,
-    `https://r.jina.ai/https://hanime1.com${path}`,
-  ];
-  let lastError;
-  for (const target of targets) {
-    try {
-      const r = await fetch(target, { headers: HM_HEADERS, signal: AbortSignal.timeout(20_000) });
-      if (!r.ok) throw new Error(`hanime1 ${r.status}`);
-      const html = await r.text();
-      if (!/<html\b|video-item-container|skip-page-form|og:title/i.test(html)) throw new Error("invalid HTML");
-      resp.setHeader("content-type", "text/html; charset=utf-8");
-      resp.setHeader("access-control-allow-origin", "*");
-      resp.setHeader("cache-control", "public, max-age=60");
-      resp.status(200).end(html);
-      return;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  return json(resp, { message: lastError?.message || "hanime1 relay unavailable", provider: "hm" }, 502);
-}
-
 export default async function handler(req, resp) {
   if (req.method === "OPTIONS") {
     resp.status(200);
@@ -385,7 +331,6 @@ export default async function handler(req, resp) {
   const base = selfBase(req);
   try {
     const action = requestUrl.searchParams.get("action") || "list";
-    if (action === "hm") return await hmRelay(resp, requestUrl);
     if (action === "ep") return await epPlay(resp, requestUrl);
     if (action === "media") return await phMedia(resp, requestUrl, base);
     if (action === "detail") return await phDetail(resp, requestUrl.searchParams.get("id"), base);

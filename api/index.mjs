@@ -213,16 +213,8 @@ async function epPlay(resp, requestUrl) {
   };
   await tryVariant("xhr-nohash", () => callXhr(""));
   let hash = "", cookie = "", watchUrl = "", watchDebug = null;
-  try {
-    const api = new URL("https://www.eporner.com/api/v2/video/id/");
-    api.searchParams.set("id", id);
-    api.searchParams.set("thumbsize", "medium");
-    api.searchParams.set("format", "json");
-    const ar = await fetch(api, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
-    const aj = await ar.json();
-    watchUrl = aj?.url || "";
-    if (!watchUrl) throw new Error("no url from api");
-    const watchHeaders = {
+  const fetchWithHash = async (url) => {
+    const headers = {
       ...EP_HEADERS,
       "accept-language": "en-US,en;q=0.9",
       "accept-encoding": "gzip, deflate, br",
@@ -231,13 +223,45 @@ async function epPlay(resp, requestUrl) {
       "sec-fetch-mode": "navigate",
       "sec-fetch-dest": "document",
     };
-    const wr = await fetch(watchUrl, { headers: watchHeaders, signal: AbortSignal.timeout(20_000) });
-    const setC = wr.headers.getSetCookie?.() || [];
-    cookie = setC.map((c) => c.split(";")[0]).join("; ");
-    const wh = await wr.text();
-    watchDebug = { status: wr.status, len: wh.length, hasHash: /EP\.video\.player\.hash/.test(wh), hasBot: /Just a moment|challenge|cf-challenge/i.test(wh), preview: wh.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) };
-    const m = wh.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || wh.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i) || wh.match(/xhr\/video\/[^"']*?[?&]hash=([a-zA-Z0-9_-]+)/i);
-    hash = toBase36Hash(m ? m[1] : "");
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+    const setC = r.headers.getSetCookie?.() || [];
+    const c = setC.map((x) => x.split(";")[0]).join("; ");
+    const html = await r.text();
+    const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || html.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i) || html.match(/xhr\/video\/[^"']*?[?&]hash=([a-zA-Z0-9_-]+)/i);
+    return { html, cookie: c, status: r.status, hash: toBase36Hash(m ? m[1] : ""), hasHash: /EP\.video\.player\.hash/.test(html) };
+  };
+  try {
+    const api = new URL("https://www.eporner.com/api/v2/video/id/");
+    api.searchParams.set("id", id);
+    api.searchParams.set("thumbsize", "medium");
+    api.searchParams.set("format", "json");
+    const ar = await fetch(api, { headers: EP_HEADERS, signal: AbortSignal.timeout(20_000) });
+    const aj = await ar.json();
+    watchUrl = aj?.url || `https://www.eporner.com/video-${id}/`;
+    // Try embed first (no age gate), then watch page
+    const embedUrl = `https://www.eporner.com/embed/${encodeURIComponent(id)}/`;
+    const embed = await fetchWithHash(embedUrl);
+    watchDebug = { embed: { status: embed.status, len: embed.html.length, hasHash: embed.hasHash, preview: embed.html.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) } };
+    if (embed.hash) {
+      hash = embed.hash;
+      cookie = embed.cookie;
+      watchUrl = embedUrl; // use embed as referer for xhr
+    } else {
+      const watch = await fetchWithHash(watchUrl);
+      watchDebug.watch = { status: watch.status, len: watch.html.length, hasHash: watch.hasHash, preview: watch.html.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) };
+      watchDebug.status = watch.status;
+      watchDebug.len = watch.html.length;
+      watchDebug.hasHash = watch.hasHash;
+      watchDebug.hasBot = /Just a moment|challenge|cf-challenge/i.test(watch.html);
+      watchDebug.preview = watch.html.slice(0, 400).replace(/\s+/g, " ").slice(0, 400);
+      if (watch.hash) {
+        hash = watch.hash;
+        cookie = watch.cookie;
+      } else {
+        // age gate hit — keep debug for fallback diagnosis
+        watchDebug.ageGate = /Age Verification/i.test(watch.html);
+      }
+    }
   } catch (e) {
     variants.push("watch: " + (e?.message || String(e)).slice(0, 60));
   }

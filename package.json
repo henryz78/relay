@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vercel dev",
-    "deploy": "vercel --prod"
+    "deploy": "vercel --prod",
+    "start": "node server.mjs"
   },
   "devDependencies": {
     "vercel": "^37.0.0"

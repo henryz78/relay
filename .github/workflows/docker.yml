@@ -1,5 +1,7 @@
 # 构建 Docker 镜像并冒烟测试。Dockerfile 内嵌在本文件里，
 # 仓库里不单独放 Dockerfile。
+# 合并到 main 后自动推到 GitHub 自带镜像仓库（ghcr.io），
+# 不需要 Docker Hub 账号、不需要配任何 secret。
 name: docker
 
 on:
@@ -7,8 +9,12 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  build-and-smoke:
+  build-smoke-push:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +41,17 @@ jobs:
           sleep 3
           curl -sf "http://127.0.0.1:3100/api?action=status"
           docker stop relay-test
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          IMAGE="ghcr.io/henryz78/relay"
+          SHA_TAG="${GITHUB_SHA::7}"
+          docker build -t "$IMAGE:latest" -t "$IMAGE:$SHA_TAG" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$SHA_TAG"
+          echo "pushed $IMAGE:latest + $IMAGE:$SHA_TAG"

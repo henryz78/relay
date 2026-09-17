@@ -1,0 +1,37 @@
+# 构建 Docker 镜像并冒烟测试。Dockerfile 内嵌在本文件里，
+# 仓库里不单独放 Dockerfile。
+name: docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write Dockerfile
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM node:22-slim
+          WORKDIR /app
+          COPY server.mjs ./
+          COPY api ./api
+          COPY lib ./lib
+          COPY sites ./sites
+          EXPOSE 3000
+          CMD ["node", "server.mjs"]
+          EOF
+
+      - name: Build image
+        run: docker build -t relay:test .
+
+      - name: Smoke test status endpoint
+        run: |
+          docker run -d -p 3100:3000 --name relay-test relay:test
+          sleep 3
+          curl -sf "http://127.0.0.1:3100/api?action=status"
+          docker stop relay-test

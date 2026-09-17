@@ -1,5 +1,4 @@
-# 构建 Docker 镜像并冒烟测试。Dockerfile 内嵌在本文件里，
-# 仓库里不单独放 Dockerfile。
+# 构建 Docker 镜像并冒烟测试（Dockerfile 在仓库根，与 Railway 共用同一份）。
 # 合并到 main 后自动推到 GitHub 自带镜像仓库（ghcr.io），
 # 不需要 Docker Hub 账号、不需要配任何 secret。
 name: docker
@@ -18,19 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Write Dockerfile
-        run: |
-          cat > Dockerfile <<'EOF'
-          FROM node:22-slim
-          WORKDIR /app
-          COPY server.mjs ./
-          COPY api ./api
-          COPY lib ./lib
-          COPY sites ./sites
-          EXPOSE 3000
-          CMD ["node", "server.mjs"]
-          EOF
 
       - name: Build image
         run: docker build -t relay:test .
